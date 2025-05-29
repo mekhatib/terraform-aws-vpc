@@ -28,10 +28,10 @@ output "private_route_table_ids" {
   value       = aws_route_table.private[*].id
 }
 
-output "flow_log_id" {
-  description = "ID of VPC Flow Log"
-  value       = try(aws_flow_log.main[0].id, null)
-}
+#output "flow_log_id" {
+#  description = "ID of VPC Flow Log"
+#  value       = try(aws_flow_log.main[0].id, null)
+#}
 
 output "private_zone_id" {
   description = "ID of Route53 private hosted zone"
