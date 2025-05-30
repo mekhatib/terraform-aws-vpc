@@ -29,7 +29,7 @@ variable "vpc_cidr" {
 variable "vpc_netmask_length" {
   description = "Netmask length for VPC when using IPAM"
   type        = number
-  default     = 28
+  default     = 26
 }
 
 variable "availability_zones" {
