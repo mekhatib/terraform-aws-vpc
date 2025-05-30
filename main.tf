@@ -9,6 +9,11 @@ resource "aws_vpc" "main" {
   
   enable_dns_hostnames = var.enable_dns_hostnames
   enable_dns_support   = var.enable_dns_support
+  
+  lifecycle {
+    create_before_destroy = false
+  }
+  
   tags = merge(
     var.tags,
     {
@@ -42,11 +47,13 @@ resource "aws_subnet" "private" {
   
   # Use the data source to get the actual CIDR block
   cidr_block = cidrsubnet(
-    data.aws_vpc.main.cidr_block,  # ← Use data source instead
+    data.aws_vpc.main.cidr_block,
     var.subnet_newbits != null ? var.subnet_newbits : (
       var.use_ipam ? 
-        (32 - var.vpc_netmask_length - 5) :  # For IPAM: calculate based on netmask
-        (16 - tonumber(split("/", data.aws_vpc.main.cidr_block)[1]) + 11)  # For traditional CIDR
+        # For IPAM: /20 VPC -> /27 subnets (7 additional bits)
+        max(0, 32 - var.vpc_netmask_length - 5) :
+        # For traditional CIDR: calculate based on existing CIDR
+        max(0, 16 - tonumber(split("/", data.aws_vpc.main.cidr_block)[1]) + 11)
     ),
     count.index
   )
@@ -60,15 +67,13 @@ resource "aws_subnet" "private" {
       Type = var.subnet_types[count.index]
     }
   )
-  depends_on = [aws_vpc.main, data.aws_vpc.main]
+  depends_on = [data.aws_vpc.main]
 }
 
-# Route Tables
+# Route Tables for Private Subnets
 resource "aws_route_table" "private" {
   count = length([for k, v in var.subnet_types : k if v == "private"])
-
   vpc_id = aws_vpc.main.id
-
   tags = merge(
     var.tags,
     {
@@ -77,11 +82,10 @@ resource "aws_route_table" "private" {
   )
 }
 
+# Route Table for Public Subnets
 resource "aws_route_table" "public" {
   count = length([for k, v in var.subnet_types : k if v == "public"]) > 0 ? 1 : 0
-
   vpc_id = aws_vpc.main.id
-
   tags = merge(
     var.tags,
     {
@@ -90,10 +94,9 @@ resource "aws_route_table" "public" {
   )
 }
 
-# Public route
+# Public route to Internet Gateway
 resource "aws_route" "public_internet" {
   count = length([for k, v in var.subnet_types : k if v == "public"]) > 0 ? 1 : 0
-
   route_table_id         = aws_route_table.public[0].id
   destination_cidr_block = "0.0.0.0/0"
   gateway_id             = aws_internet_gateway.main.id
@@ -102,11 +105,24 @@ resource "aws_route" "public_internet" {
 # Route Table Associations
 resource "aws_route_table_association" "subnet" {
   count = length(var.availability_zones)
-
   subnet_id = aws_subnet.private[count.index].id
   route_table_id = var.subnet_types[count.index] == "public" ? (
     length(aws_route_table.public) > 0 ? aws_route_table.public[0].id : aws_route_table.private[0].id
   ) : element(aws_route_table.private[*].id, count.index)
 }
 
-# ... rest of the VPC module code (Flow Logs, etc.)
+# VPC Flow Logs (optional)
+resource "aws_flow_log" "vpc" {
+  count           = var.enable_flow_logs ? 1 : 0
+  iam_role_arn    = var.flow_log_iam_role_arn
+  log_destination = var.flow_log_destination
+  traffic_type    = var.flow_log_traffic_type
+  vpc_id          = aws_vpc.main.id
+  
+  tags = merge(
+    var.tags,
+    {
+      Name = "${var.project_name}-${var.environment}-vpc-flow-logs"
+    }
+  )
+}
